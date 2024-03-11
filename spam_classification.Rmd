@@ -1,0 +1,110 @@
+---
+title: "Mini_Project_4"
+author: "Diane Chiang"
+date: "2024-02-22"
+knit: (function(inputFile, encoding) {
+        Sys.setenv(RSTUDIO_PANDOC="/Applications/RStudio.app/Contents/Resources/app/quarto/bin/tools");
+        rmarkdown::render(inputFile,
+                          encoding=encoding, 
+                          output_file=file.path(dirname(inputFile), "spam_classification.pdf")) })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+email = read.csv("email.csv")
+head(email)
+```
+## Part A
+### 1. Create a contingency (or two-way) table of the variables number and spam. What do you notice? Does there appear to be an association between number and whether an email is spam?
+```{r}
+spam_number_table = table(email$spam, email$number)
+spam_number_table
+```
+There appears to be an association between spams and the magnitude of the number in the email. Specifically, email with smaller numbers seem to be classified as spam over emails with bigger numbers.
+
+
+### 2. Run a chi-squared test on this table to test the null hypothesis that there is no association between number and spam. What is the p-value and what is your conclusion?
+```{r}
+chisq.test(spam_number_table)
+```
+The p values is smaller 2.2e-16, so we conclude that there is an association between number and spam.
+
+### 3. Create a spam filter with a single predictor to_multiple– specifically, we will use the following model: logit(p) = beta_0 + beta_1 to_multiple, where p is the probability a message is spam. Fit the model and provide an estimate of exp(beta_1). What is the interpretation?
+```{r}
+mod_1 = glm(spam ~ to_multiple, data=email, family="binomial")
+mod_1_sum = summary(mod_1)
+mod_1_sum
+```
+
+```{r}
+exp(mod_1$coefficients)
+```
+exp($\beta_1$) is around 0.1638, which suggests that emails having multiple recipients is associated with 83.63% (1 - 0.1637) reduction in the email being a spam. 
+
+### 4. Using the model fit in 3, what is the probability an email is spam if it has just one address in the To field? What if more than one address is listed?
+```{r}
+one_recipient = predict(mod_1, newdata=data.frame(to_multiple=0), type="response")
+one_recipient
+
+multiple_recipient = predict(mod_1, newdata=data.frame(to_multiple=1), type="response")
+multiple_recipient
+```
+The probability an email is spam if it has one recipient is around 0.1075 and the probability an email is spam with multiple recipient is approximately 0.01935.
+
+## Part B
+### 1. Randomly divide the data into two groups: group 1 with 2,921 observations and group 2 with the remaining 1,000 observations. Create a spam filter using logistic regression on the data from group 1 with the following predictors: to_multiple, winner, format, re_subj, and number. Write out the fitted model.
+
+```{r, message=FALSE}
+library(dplyr)
+set.seed(1234)
+# Create an index vector for random sampling
+index = sample(1:nrow(email), nrow(email))
+# Specify the size of group 1
+group1_size = 2921
+# Create group 1
+group1 = email[index[1:group1_size], ]
+# Create group 2
+group2 = email[index[(group1_size + 1):nrow(email)], ]
+
+mod_2_1 = glm(spam ~ to_multiple+winner+format+re_subj+number, data=group1, family="binomial")
+summary(mod_2_1)
+```
+E(spam) = $\beta_0$ + $\beta_1$ * (to_multiple) + $\beta_2$ * (winner) + $\beta_3$ * (format)  + $\beta_4$ * (re_subj) + $\beta_5$ * (number_none) + $\beta_6$ * (number_small) 
+
+### 2. State in words the interpretation of the estimated intercept.
+The estimated intercept, -0.8629, is the log odds of the email being a spam when the email is sent to one recipient, "winner" does not appear in the email, email not written in HTML, subject doesn't start with "Re", and number is a big number in the email.
+
+### 3. You should have two indicators for number in your model. Provide an interpretation of one of the estimated coefficients.
+Adjusting for other variables, the estimated coefficients of numbernone is the ratio of odds of the email being a spam to the email having no number over the email having a big number. In other words, emails with no number is around 79.69% (e^0.5861 -  1) more likely to be spam than emails with a big number. 
+
+### 4. Test the null hypothesis that the coefficients for the number indicators are both equal to 0. What is the distribution of the test statistic under the null hypothesis? What is the value of the test statistic and what is the p-value?
+```{r}
+mod_without_number =  glm(spam ~ to_multiple+winner+format+re_subj, data=group1, family="binomial")
+anova(mod_without_number, mod_2_1, test="LRT")
+```
+Under the null hypothesis, the likelihood ration statistics has a chi-square distribution with 2 degrees of freedom. The difference in deviance is around 43.96 with a p-value around 2.846e-10, which is less than 0.05. 
+
+### 5. What is the predicted probability a message is spam with the following values of the predictors: to_multiple = 0, winner = yes, format = 0 re_subj = 0, and number = big?
+```{r}
+predict(mod_2_1, newdata=data.frame(to_multiple=0, winner="yes", format=0, re_subj=0, number="big"), type="response")
+```
+The predicted probability is around 0.6786.
+
+### 6. For a given message, how high must the probability a message is spam be before you think it would be reasonable to put it in a spambox (which the user is unlikely to check)? What tradeoffs might you consider?
+The probability should be greater than 0.5 since we need to be sure that the email is a spam before putting that email in the spambox since the user won't check the email. In other words, we want to minimize false positives (classifying the email as spam when it's not spam) and be more lenient on false negatives (classifying the email as not spam when the email is spam) for the sake of the users checking all potentially important emails. The trade off would be having actual spam emails in the primary inbox but users are also checking most emails coming into their inboxes and are confident that the emails in the spambox are truly spams. 
+
+### 7. Obtain predicted probabilities for the 1,000 observations from group 2 using the model from question 1. Using a cutoff probability of 0.25, how many observations were correctly classified?
+```{r}
+predicted_group2 = data.frame(predict(mod_2_1, newdata = group2, type = "response"))
+predicted_group2$spam = ifelse(predicted_group2$predict.mod_2_1..newdata...group2..type....response.. < 0.25, 0, 1)
+head(predicted_group2)
+```
+
+```{r}
+group2$predicted = predicted_group2$spam
+nrow(group2[group2$spam == group2$predicted,])
+```
+Out of 1000 emails, 895 emails are correctly classified. 
